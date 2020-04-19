@@ -12,8 +12,15 @@ class ArpLayer(Layer):
 
     @staticmethod
     def fields_info():
-        # TODO: Implement this :)
-        pass
+        return [UnsignedShort("hardware_type"),
+                UnsignedShort("protocol_type"),
+                UnsignedByte("hardware_len"),
+                UnsignedByte("protocol_len"),
+                UnsignedShort("operation"),
+                MacAddress("sender_hardware_addr"),
+                UnsignedShort("sender_protocol_addr"),
+                MacAddress("target_hardware_addr"),
+                UnsignedShort("target_protocol_addr")]
 
 
 class EthernetLayer(Layer):

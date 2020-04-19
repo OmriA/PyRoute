@@ -106,8 +106,9 @@ class Layer(ABC):
         """
         Deserialize this layer from a buffer
         """
-        # TODO: Implement this :)
-        pass
+        for _, field in self.fields.items():
+            field.set(field.deserialize(buffer))
+            buffer = buffer[len(field):]
 
     def build(self) -> bytes:
         """
