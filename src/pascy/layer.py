@@ -37,6 +37,15 @@ class Layer(ABC):
         elif key in self.fields.keys():
             return self.fields[key].get()
 
+    def __getitem__(self, key):
+        if self.NAME == key:
+            return self
+        
+        if self.next_layer:
+            return self.next_layer.__getitem__(key)
+
+        raise Exception("Couldn't find layer {}.".format(key))
+
     def __setattr__(self, key, val):
         if key in self.fields:
             self.fields[key].set(val)
@@ -107,7 +116,7 @@ class Layer(ABC):
         Deserialize this layer from a buffer
         """
         for _, field in self.fields.items():
-            field.set(field.deserialize(buffer))
+            field.deserialize(buffer)
             buffer = buffer[len(field):]
 
     def build(self) -> bytes:

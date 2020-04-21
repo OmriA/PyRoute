@@ -1,7 +1,7 @@
 import struct
 from functools import lru_cache
 from typing import Any
-
+from socket import inet_ntoa, inet_aton
 
 class Endianity:
     BIG = ">"
@@ -67,6 +67,29 @@ class ByteString(Field):
         self.FORMAT = '{}s'.format(size)
         super().__init__(name, default=default or b"\x00" * size)
 
+class IPAddress(Field):
+    FORMAT = "4s"
+    def __init__(self, name="ip", default="0.0.0.0"):
+        super().__init__(name, self.str2ip(default))
+
+    def format_val(self):
+        return self.ip2str(self.val)
+    
+    def set(self, value):
+        if type(value) is str:
+            value = self.str2ip(value)
+        
+        super().set(value)
+
+    @staticmethod
+    @lru_cache()
+    def str2ip(val):
+        return inet_aton(val)
+
+    @staticmethod
+    @lru_cache()
+    def ip2str(ip):
+        return inet_ntoa(ip)
 
 class MacAddress(Field):
     FORMAT = "6s"
