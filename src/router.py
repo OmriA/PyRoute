@@ -86,10 +86,18 @@ def response_icmp(pkt, leg : RouterLeg):
     resp_pkt["ICMP"].calc_checksum()
 
     resp_pkt["Raw"].load = pkt["Raw"].load
-    resp_pkt.display()
 
     leg.raw_socket.sendall(resp_pkt.build())
     print("Sent ICMP reply.")
+
+def forward_packet(pkt, leg : RouterLeg):
+    dst_ip = socket.inet_ntoa(pkt["IP"].dst)
+    pkt["Ethernet"].src = leg.mac
+    pkt["Ethernet"].dst = ARP_TABLE[dst_ip]
+    pkt["IP"].ttl -= 1
+
+    leg.raw_socket.sendall(pkt.build())
+    print("Message forwarded")
 
 @lru_cache()
 def get_leg_by_socket(s) -> RouterLeg:
@@ -99,9 +107,17 @@ def get_leg_by_socket(s) -> RouterLeg:
 
     return None
 
+@lru_cache()
+def get_leg_by_ip(ip) -> RouterLeg:
+    for leg in ROUTER_LEGS:
+        if leg.subnet in ip:
+            return leg
+
+    return None
+
 def main():
-    ROUTER_LEGS.append(RouterLeg('net1', '1.1.1', '02:42:9D:8B:D4:A3', '1.1.1.1'))
-    ROUTER_LEGS.append(RouterLeg('net2', '2.2.2', '02:42:7F:A5:C8:36', '2.2.2.1'))
+    ROUTER_LEGS.append(RouterLeg('net1', '1.1.1', '02:42:05:66:DC:60', '1.1.1.1'))
+    ROUTER_LEGS.append(RouterLeg('net2', '2.2.2', '02:42:1A:B7:27:E5', '2.2.2.1'))
 
     legs_sockets = []
     for leg in ROUTER_LEGS:
@@ -113,6 +129,9 @@ def main():
         
         for s in readable:
             leg = get_leg_by_socket(s)
+            if leg == None:
+                raise Exception("Error occured! Unknown socket found!")
+
             pkt = get_packet(leg)
             if not pkt:
                 continue
@@ -128,9 +147,10 @@ def main():
                 if pkt["IP"].protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
                     response_icmp(pkt, leg)
 
-            # Packet is not for me
+            # Packet destination is not me
             else:
-                pass
+                leg = get_leg_by_ip(socket.inet_ntoa(pkt["IP"].dst))
+                forward_packet(pkt, leg)
 
         for s in exceptional:
             legs_sockets.remove(s)
