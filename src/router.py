@@ -48,16 +48,19 @@ def get_packet(leg : RouterLeg) -> pascy.Layer:
 
         eth.connect_layer(ip)
 
+    if len(pkt_raw) > 0:
+        raw = pascy.RawLayer()
+        raw.load = pkt_raw
+        eth.connect_layer(raw)
+
     return eth
 
 def response_arp(pkt, leg : RouterLeg):
-    resp_pkt = pascy.l2.EthernetLayer() / pascy.l2.ArpLayer()
+    resp_pkt = pascy.l2.EthernetLayer() / pascy.l2.ArpLayer() / pascy.RawLayer()
     resp_pkt["Ethernet"].dst = pkt["Ethernet"].src
     resp_pkt["Ethernet"].src = leg.mac
-    resp_pkt["ARP"].hardware_type = pkt["ARP"].hardware_type
-    resp_pkt["ARP"].protocol_type = pkt["ARP"].protocol_type
-    resp_pkt["ARP"].hardware_len = pkt["ARP"].hardware_len
-    resp_pkt["ARP"].protocol_len = pkt["ARP"].protocol_len
+
+    resp_pkt["ARP"].copy_layer(pkt["ARP"])
     resp_pkt["ARP"].operation = pascy.ArpLayer.OP_IS_AT
     resp_pkt["ARP"].sender_hardware_addr = leg.mac
     resp_pkt["ARP"].sender_protocol_addr = leg.ip
@@ -69,16 +72,21 @@ def response_arp(pkt, leg : RouterLeg):
 
 def response_icmp(pkt, leg : RouterLeg):
     resp_pkt = pascy.EthernetLayer() / (pascy.IpLayer() / pascy.IcmpLayer())
+    resp_pkt.connect_layer(pascy.RawLayer())
     resp_pkt["Ethernet"].dst = pkt["Ethernet"].src
     resp_pkt["Ethernet"].src = leg.mac
+
     resp_pkt["IP"].copy_layer(pkt["IP"])
     resp_pkt["IP"].dst = pkt["IP"].src
     resp_pkt["IP"].src = leg.ip
-    resp_pkt["IP"].length = len(resp_pkt["IP"])
     resp_pkt["IP"].calc_checksum()
+
     resp_pkt["ICMP"].type = pascy.IcmpLayer.ECHO_REPLY
     resp_pkt["ICMP"].rest = pkt["ICMP"].rest
     resp_pkt["ICMP"].calc_checksum()
+
+    resp_pkt["Raw"].load = pkt["Raw"].load
+    resp_pkt.display()
 
     leg.raw_socket.sendall(resp_pkt.build())
     print("Sent ICMP reply.")
@@ -101,6 +109,7 @@ def main():
 
     while legs_sockets:
         readable, _, exceptional = select.select(legs_sockets, [], legs_sockets)
+        print("Recieved...")
         
         for s in readable:
             leg = get_leg_by_socket(s)
@@ -108,11 +117,20 @@ def main():
             if not pkt:
                 continue
 
-            if pkt["Ethernet"].ether_type == pascy.EthernetLayer.ARP_ETHER_TYPE:
+            # ARP request for me
+            if pkt["Ethernet"].ether_type == pascy.EthernetLayer.ARP_ETHER_TYPE and \
+                pkt["ARP"].target_protocol_addr == socket.inet_aton(leg.ip):
                 response_arp(pkt, leg)
 
-            elif pkt["IP"].protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
-                response_icmp(pkt, leg)
+            # Packet is for me
+            elif pkt["IP"].dst == socket.inet_aton(leg.ip):
+                # Ping for me
+                if pkt["IP"].protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
+                    response_icmp(pkt, leg)
+
+            # Packet is not for me
+            else:
+                pass
 
         for s in exceptional:
             legs_sockets.remove(s)

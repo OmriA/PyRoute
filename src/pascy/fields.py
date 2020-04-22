@@ -67,6 +67,11 @@ class ByteString(Field):
         self.FORMAT = '{}s'.format(size)
         super().__init__(name, default=default or b"\x00" * size)
 
+    def set(self, value):
+        self.val = value
+        self.size = len(value)
+        self.FORMAT = '{}s'.format(self.size)
+
 class IPAddress(Field):
     FORMAT = "4s"
     def __init__(self, name="ip", default="0.0.0.0"):
