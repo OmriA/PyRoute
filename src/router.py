@@ -1,6 +1,8 @@
 from router_leg import RouterLeg    
 import pascy
 import socket
+import select
+from functools import lru_cache
 
 ROUTER_LEGS = []
 
@@ -8,13 +10,13 @@ ARP_TABLE = {'1.1.1.2':'02:42:01:01:01:02',
              '2.2.2.2':'02:42:02:02:02:02'}
 
 BROADCAST = 'FF:FF:FF:FF:FF:FF'
-ARP_ETHER_TYPE = 0x0806
 
-def get_all_packets(leg : RouterLeg) -> pascy.Layer:
+def get_packet(leg : RouterLeg) -> pascy.Layer:
     # Recieve packet
     raw_socket = leg.raw_socket
     pkt_raw = raw_socket.recvfrom(65536)[0]
 
+    # Parse ethernet layer
     eth = pascy.l2.EthernetLayer()
     eth.deserialize(pkt_raw)
     pkt_raw = pkt_raw[len(eth):]
@@ -24,14 +26,28 @@ def get_all_packets(leg : RouterLeg) -> pascy.Layer:
     if dst != leg.mac and dst != BROADCAST:
         return None
 
-    if eth.ether_type == ARP_ETHER_TYPE:
-        print("ARP REQUEST!")
+    # Parse arp layer
+    if eth.ether_type == pascy.EthernetLayer.ARP_ETHER_TYPE:
         arp = pascy.l2.ArpLayer()
         arp.deserialize(pkt_raw)
         pkt_raw = pkt_raw[len(arp):]
         eth.connect_layer(arp)
 
-    eth.display()
+    # Parse ip layer
+    elif eth.ether_type == pascy.EthernetLayer.IPV4_ETHER_TYPE:
+        ip = pascy.l3.IpLayer()
+        ip.deserialize(pkt_raw)
+        pkt_raw = pkt_raw[len(ip):]
+        
+        # Parse icmp layer
+        if ip.protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
+            icmp = pascy.l3.IcmpLayer()
+            icmp.deserialize(pkt_raw)
+            pkt_raw = pkt_raw[len(icmp):]
+            ip.connect_layer(icmp)
+
+        eth.connect_layer(ip)
+
     return eth
 
 def response_arp(pkt, leg : RouterLeg):
@@ -49,18 +65,57 @@ def response_arp(pkt, leg : RouterLeg):
     resp_pkt["ARP"].target_protocol_addr = pkt["ARP"].sender_protocol_addr
 
     leg.raw_socket.sendall(resp_pkt.build())
+    print("Sent ARP reply.")
+
+def response_icmp(pkt, leg : RouterLeg):
+    resp_pkt = pascy.EthernetLayer() / (pascy.IpLayer() / pascy.IcmpLayer())
+    resp_pkt["Ethernet"].dst = pkt["Ethernet"].src
+    resp_pkt["Ethernet"].src = leg.mac
+    resp_pkt["IP"].copy_layer(pkt["IP"])
+    resp_pkt["IP"].dst = pkt["IP"].src
+    resp_pkt["IP"].src = leg.ip
+    resp_pkt["IP"].length = len(resp_pkt["IP"])
+    resp_pkt["IP"].calc_checksum()
+    resp_pkt["ICMP"].type = pascy.IcmpLayer.ECHO_REPLY
+    resp_pkt["ICMP"].rest = pkt["ICMP"].rest
+    resp_pkt["ICMP"].calc_checksum()
+
+    leg.raw_socket.sendall(resp_pkt.build())
+    print("Sent ICMP reply.")
+
+@lru_cache()
+def get_leg_by_socket(s) -> RouterLeg:
+    for leg in ROUTER_LEGS:
+        if leg.raw_socket == s:
+            return leg
+
+    return None
 
 def main():
-    ROUTER_LEGS.append(RouterLeg('net1', '1.1.1', '02:42:9d:8b:d4:a3', '1.1.1.1'))
-    ROUTER_LEGS.append(RouterLeg('net2', '2.2.2', '02:42:7f:a5:c8:36', '2.2.2.1'))
+    ROUTER_LEGS.append(RouterLeg('net1', '1.1.1', '02:42:9D:8B:D4:A3', '1.1.1.1'))
+    ROUTER_LEGS.append(RouterLeg('net2', '2.2.2', '02:42:7F:A5:C8:36', '2.2.2.1'))
 
-    while True:
-        pkt = get_all_packets(ROUTER_LEGS[0])
-        if not pkt:
-            continue
+    legs_sockets = []
+    for leg in ROUTER_LEGS:
+        legs_sockets.append(leg.raw_socket)
 
-        if pkt.ether_type == ARP_ETHER_TYPE:
-            response_arp(pkt, ROUTER_LEGS[0])
+    while legs_sockets:
+        readable, _, exceptional = select.select(legs_sockets, [], legs_sockets)
+        
+        for s in readable:
+            leg = get_leg_by_socket(s)
+            pkt = get_packet(leg)
+            if not pkt:
+                continue
+
+            if pkt["Ethernet"].ether_type == pascy.EthernetLayer.ARP_ETHER_TYPE:
+                response_arp(pkt, leg)
+
+            elif pkt["IP"].protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
+                response_icmp(pkt, leg)
+
+        for s in exceptional:
+            legs_sockets.remove(s)
         
 if __name__ == "__main__":
     main()

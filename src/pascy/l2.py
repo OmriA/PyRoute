@@ -1,5 +1,6 @@
 from pascy.layer import Layer
 from pascy.fields import *
+from pascy.l3 import IpLayer
 
 MAC_BROADCAST = "FF:FF:FF:FF:FF:FF"
 
@@ -26,8 +27,12 @@ class ArpLayer(Layer):
 class EthernetLayer(Layer):
     NAME = "Ethernet"
 
+    ARP_ETHER_TYPE = 0x0806
+    IPV4_ETHER_TYPE = 0x0800
+
     SUB_LAYERS = [
         [ArpLayer, "ether_type", 0x806],
+        [IpLayer, "ether_type", 0x800]
     ]
 
     @staticmethod

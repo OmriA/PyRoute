@@ -139,6 +139,13 @@ class Layer(ABC):
         else:
             return self.size
 
+    def copy_layer(self, other):
+        if type(self) is not type(other):
+            raise Exception("Can't copy {} to {}.".format(type(self), type(other)))
+
+        for field in self.fields_info():
+            self.fields[field.name].val = other.fields[field.name].val
+
     def connect_layer(self, other):
         for layer, field, val in self.SUB_LAYERS:
             if isinstance(other, layer):
