@@ -21,7 +21,8 @@ class ArpLayer(Layer):
                 MacAddress("sender_hardware_addr"),
                 IPAddress("sender_protocol_addr"),
                 MacAddress("target_hardware_addr"),
-                IPAddress("target_protocol_addr")]
+                IPAddress("target_protocol_addr"),
+                ]
 
 
 class EthernetLayer(Layer):
@@ -32,11 +33,12 @@ class EthernetLayer(Layer):
 
     SUB_LAYERS = [
         [ArpLayer, "ether_type", 0x806],
-        [IpLayer, "ether_type", 0x800]
+        [IpLayer, "ether_type", 0x800],
     ]
 
     @staticmethod
     def fields_info():
         return [MacAddress("dst", MAC_BROADCAST),
                 MacAddress("src"),
-                UnsignedShort("ether_type", 0)]
+                UnsignedShort("ether_type", 0),
+                ]

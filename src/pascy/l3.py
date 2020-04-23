@@ -1,6 +1,17 @@
 from pascy.layer import Layer
 from pascy.fields import *
+from functools import lru_cache
 
+@lru_cache()
+def calc_checksum(bytes_buffer: bytes):
+    sum = 0
+    for i in range(0, len(bytes_buffer), 2):
+        sum += struct.unpack('>H', bytes_buffer[i:i+2])[0]
+    
+    sum = sum + (sum >> 16) - (sum >> 16 << 16)
+    sum = 0xffff - sum
+
+    return sum
 
 class IcmpLayer(Layer):
     NAME = 'ICMP'
@@ -13,20 +24,13 @@ class IcmpLayer(Layer):
         return [UnsignedByte("type"),
                 UnsignedByte("code"),
                 UnsignedShort("checksum"),
-                ByteString("rest", 4)]
+                UnsignedShort("identifier"),
+                UnsignedShort("sequence"),
+                ]
 
     def calc_checksum(self):
         self.checksum = 0
-
-        buffer = self.serialize()
-        sum = 0
-        for i in range(0, len(buffer), 2):
-            sum += struct.unpack('>H', buffer[i:i+2])[0]
-        
-        sum = sum + (sum >> 16) - (sum >> 16 << 16)
-        sum = 0xffff - sum
-
-        self.checksum = sum
+        self.checksum = calc_checksum(self.serialize())
 
 class IpLayer(Layer):
     NAME = 'IP'
@@ -34,7 +38,7 @@ class IpLayer(Layer):
     ICMP_PROTOCOL_NUMBER = 0x01
 
     SUB_LAYERS = [
-        [IcmpLayer, "protocol", ICMP_PROTOCOL_NUMBER]
+        [IcmpLayer, "protocol", ICMP_PROTOCOL_NUMBER],
     ]
 
     @staticmethod
@@ -48,17 +52,9 @@ class IpLayer(Layer):
                 UnsignedByte("protocol"),
                 UnsignedShort("checksum"),
                 IPAddress("src"),
-                IPAddress("dst")]
+                IPAddress("dst"),
+                ]
 
     def calc_checksum(self):
         self.checksum = 0
-
-        buffer = self.serialize()
-        sum = 0
-        for i in range(0, len(buffer), 2):
-            sum += struct.unpack('>H', buffer[i:i+2])[0]
-        
-        sum = sum + (sum >> 16) - (sum >> 16 << 16)
-        sum = 0xffff - sum
-
-        self.checksum = sum
+        self.checksum = calc_checksum(self.serialize())

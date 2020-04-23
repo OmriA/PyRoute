@@ -3,18 +3,38 @@ import pascy
 import socket
 import select
 from functools import lru_cache
+from const import BUFFER_SIZE
 
 ROUTER_LEGS = []
 
 ARP_TABLE = {'1.1.1.2':'02:42:01:01:01:02',
              '2.2.2.2':'02:42:02:02:02:02'}
 
-BROADCAST = 'FF:FF:FF:FF:FF:FF'
+def parse_arp(pkt_raw):
+    arp = pascy.l2.ArpLayer()
+    arp.deserialize(pkt_raw)
+    pkt_raw = pkt_raw[len(arp):]
 
-def get_packet(leg : RouterLeg) -> pascy.Layer:
+    return arp, pkt_raw
+
+def parse_ip(pkt_raw):
+    ip = pascy.l3.IpLayer()
+    ip.deserialize(pkt_raw)
+    pkt_raw = pkt_raw[len(ip):]
+    
+    # Parse icmp layer
+    if ip.protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
+        icmp = pascy.l3.IcmpLayer()
+        icmp.deserialize(pkt_raw)
+        pkt_raw = pkt_raw[len(icmp):]
+        ip.connect_layer(icmp)
+
+    return ip, pkt_raw
+
+def get_packet(leg: RouterLeg) -> pascy.Layer:
     # Recieve packet
     raw_socket = leg.raw_socket
-    pkt_raw = raw_socket.recvfrom(65536)[0]
+    pkt_raw = raw_socket.recv(BUFFER_SIZE)
 
     # Parse ethernet layer
     eth = pascy.l2.EthernetLayer()
@@ -23,31 +43,21 @@ def get_packet(leg : RouterLeg) -> pascy.Layer:
 
     dst = pascy.fields.MacAddress.mac2str(eth.dst)
     # Checks if the packet is for me
-    if dst != leg.mac and dst != BROADCAST:
+    if dst != leg.mac and dst != pascy.l2.MAC_BROADCAST:
         return None
 
     # Parse arp layer
     if eth.ether_type == pascy.EthernetLayer.ARP_ETHER_TYPE:
-        arp = pascy.l2.ArpLayer()
-        arp.deserialize(pkt_raw)
-        pkt_raw = pkt_raw[len(arp):]
+        arp, pkt_raw = parse_arp(pkt_raw)
         eth.connect_layer(arp)
 
     # Parse ip layer
     elif eth.ether_type == pascy.EthernetLayer.IPV4_ETHER_TYPE:
-        ip = pascy.l3.IpLayer()
-        ip.deserialize(pkt_raw)
-        pkt_raw = pkt_raw[len(ip):]
-        
-        # Parse icmp layer
-        if ip.protocol == pascy.IpLayer.ICMP_PROTOCOL_NUMBER:
-            icmp = pascy.l3.IcmpLayer()
-            icmp.deserialize(pkt_raw)
-            pkt_raw = pkt_raw[len(icmp):]
-            ip.connect_layer(icmp)
-
+        ip, pkt_raw = parse_ip(pkt_raw)
         eth.connect_layer(ip)
 
+    # If there is more buffer after we parsed the whole layers add it 
+    # to the raw layer
     if len(pkt_raw) > 0:
         raw = pascy.RawLayer()
         raw.load = pkt_raw
@@ -55,8 +65,8 @@ def get_packet(leg : RouterLeg) -> pascy.Layer:
 
     return eth
 
-def response_arp(pkt, leg : RouterLeg):
-    resp_pkt = pascy.l2.EthernetLayer() / pascy.l2.ArpLayer() / pascy.RawLayer()
+def response_arp(pkt, leg: RouterLeg):
+    resp_pkt = pascy.l2.EthernetLayer() / pascy.l2.ArpLayer()
     resp_pkt["Ethernet"].dst = pkt["Ethernet"].src
     resp_pkt["Ethernet"].src = leg.mac
 
@@ -70,7 +80,7 @@ def response_arp(pkt, leg : RouterLeg):
     leg.raw_socket.sendall(resp_pkt.build())
     print("Sent ARP reply.")
 
-def response_icmp(pkt, leg : RouterLeg):
+def response_icmp(pkt, leg: RouterLeg):
     resp_pkt = pascy.EthernetLayer() / (pascy.IpLayer() / pascy.IcmpLayer())
     resp_pkt.connect_layer(pascy.RawLayer())
     resp_pkt["Ethernet"].dst = pkt["Ethernet"].src
@@ -90,7 +100,7 @@ def response_icmp(pkt, leg : RouterLeg):
     leg.raw_socket.sendall(resp_pkt.build())
     print("Sent ICMP reply.")
 
-def forward_packet(pkt, leg : RouterLeg):
+def forward_packet(pkt, leg: RouterLeg):
     dst_ip = socket.inet_ntoa(pkt["IP"].dst)
     pkt["Ethernet"].src = leg.mac
     pkt["Ethernet"].dst = ARP_TABLE[dst_ip]
@@ -153,7 +163,9 @@ def main():
                 forward_packet(pkt, leg)
 
         for s in exceptional:
+            leg = get_leg_by_socket(s)
             legs_sockets.remove(s)
+            print("Critical: lost connection with leg {}".format(leg.interface))
         
 if __name__ == "__main__":
     main()
