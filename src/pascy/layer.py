@@ -2,7 +2,6 @@ from abc import ABC, abstractmethod
 from collections import OrderedDict
 from functools import lru_cache
 
-
 class Layer(ABC):
     NAME = ""
     SUB_LAYERS = []
@@ -37,6 +36,15 @@ class Layer(ABC):
         elif key in self.fields.keys():
             return self.fields[key].get()
 
+    def __getitem__(self, key):
+        if self.NAME == key:
+            return self
+        
+        if self.next_layer != None:
+            return self.next_layer.__getitem__(key)
+
+        raise Exception("Couldn't find layer {}.".format(key))
+
     def __setattr__(self, key, val):
         if key in self.fields:
             self.fields[key].set(val)
@@ -67,7 +75,7 @@ class Layer(ABC):
 
         # Recurse all sub-layers
         next_layer = self.next_layer
-        while next_layer:
+        while next_layer != None:
             indent += "\t"
             content += indent + "--- {} ---\n".format(next_layer.NAME)
 
@@ -106,14 +114,15 @@ class Layer(ABC):
         """
         Deserialize this layer from a buffer
         """
-        # TODO: Implement this :)
-        pass
+        for _, field in self.fields.items():
+            field.deserialize(buffer)
+            buffer = buffer[len(field):]
 
     def build(self) -> bytes:
         """
         Build the entire packet into a raw buffer
         """
-        if self.next_layer:
+        if self.next_layer != None:
             return self.serialize() + self.next_layer.build()
 
         else:
@@ -123,13 +132,30 @@ class Layer(ABC):
         """
         :return:    The size (in bytes) of the entire packet's raw data
         """
-        if self.next_layer:
+        if self.next_layer != None:
             return self.size + len(self.next_layer)
 
         else:
             return self.size
 
+    def copy_layer(self, other):
+        if type(self) is not type(other):
+            raise Exception("Can't copy {} to {}.".format(type(self), type(other)))
+
+        for field in self.fields_info():
+            self.fields[field.name].val = other.fields[field.name].val
+
     def connect_layer(self, other):
+        if other.__class__.__name__ == 'RawLayer':
+            self.last_layer = other
+
+            if not self.next_layer:
+                self.next_layer = other
+            else:
+                self.next_layer.connect_layer(other)
+
+            return self
+
         for layer, field, val in self.SUB_LAYERS:
             if isinstance(other, layer):
                 self.last_layer.fields[field].set(val)
@@ -143,3 +169,4 @@ class Layer(ABC):
                 return self
 
         raise Exception("Can't link {} and {}.".format(self.__class__.__name__, other.__class__.__name__))
+    
